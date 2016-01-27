@@ -65,7 +65,7 @@ export default {
             this.$http.get('api/portfolio/' + this.folio + '/building', function (b) {
                 this.buildings = b;
             }).bind(this);
-        },  
+        },
 
         setActive: function(id) {
             this.activeBuilding = id;
