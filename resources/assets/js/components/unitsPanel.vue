@@ -10,25 +10,31 @@
                         <span class="caret"></span>
                     </button>
                     <ul class="dropdown-menu" aria-labelledby="dropdownMenu1">
-                        <li v-for="building in buildings"><a v-on:click="setActive({{building}})" href="#">{{building.name }}</a></li>
+                        <li v-for="building in buildings">
+                            <a v-on:click="setActive(building)" href="#">
+                                {{building.name }}
+                            </a>
+                        </li>
                         <li role="separator" class="divider"></li>
                         <li><a href="#">Add building</a></li>
+
                     </ul>
                 </div>
             </div>
 
             <div v-if="buildings" class="panel-body">
+                <ul class="list-group">
 
-                <ul v-for="unit in units" class="list-group">
-
-                    <li class="list-group-item"><i class=" fa fa-btn fa-building"></i><a
-                        href="#">unit name</a></li>
+                    <li v-for="unit in activeBuilding.units"
+                        class="list-group-item">
+                        <i class=" fa fa-btn fa-building"></i>
+                        <a href="#">{{unit.name}}</a>
+                    </li>
 
                 </ul>
 
-
-                <div class="col-md-offset-4">
-                    <a href="/building/{{ buildings[1].id }}unit/create">
+                  <div class="col-md-offset-4">
+                    <a href="./building/{{ activeBuilding.id }}/unit/create">
                         <button class="btn btn-success">Add a Unit</button>
                     </a>
 
@@ -39,7 +45,7 @@
     </div>
 </template>
 
-< script >
+<script>
 export default {
 
     props: ['folio'],
@@ -64,6 +70,7 @@ export default {
         getBuildings: function () {
             this.$http.get('api/portfolio/' + this.folio + '/building', function (b) {
                 this.buildings = b;
+                this.activeBuilding = b[0];
             }).bind(this);
         },
 

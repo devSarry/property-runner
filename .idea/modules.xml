@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/poptemp.iml" filepath="$PROJECT_DIR$/.idea/poptemp.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/property-runner.iml" filepath="$PROJECT_DIR$/.idea/property-runner.iml" />
     </modules>
   </component>
 </project>

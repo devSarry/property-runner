@@ -1,8 +1,8 @@
 (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
 (function (process){
 /*!
- * Vue.js v1.0.13
- * (c) 2015 Evan You
+ * Vue.js v1.0.15
+ * (c) 2016 Evan You
  * Released under the MIT License.
  */
 'use strict';
@@ -479,23 +479,29 @@ var p = Cache.prototype;
  */
 
 p.put = function (key, value) {
-  var entry = {
-    key: key,
-    value: value
-  };
-  this._keymap[key] = entry;
-  if (this.tail) {
-    this.tail.newer = entry;
-    entry.older = this.tail;
-  } else {
-    this.head = entry;
-  }
-  this.tail = entry;
+  var removed;
   if (this.size === this.limit) {
-    return this.shift();
-  } else {
+    removed = this.shift();
+  }
+
+  var entry = this.get(key, true);
+  if (!entry) {
+    entry = {
+      key: key
+    };
+    this._keymap[key] = entry;
+    if (this.tail) {
+      this.tail.newer = entry;
+      entry.older = this.tail;
+    } else {
+      this.head = entry;
+    }
+    this.tail = entry;
     this.size++;
   }
+  entry.value = value;
+
+  return removed;
 };
 
 /**
@@ -511,6 +517,7 @@ p.shift = function () {
     this.head.older = undefined;
     entry.newer = entry.older = undefined;
     this._keymap[entry.key] = undefined;
+    this.size--;
   }
   return entry;
 };
@@ -794,16 +801,17 @@ function parseText(text) {
  * into one single expression as '"a " + b + " c"'.
  *
  * @param {Array} tokens
+ * @param {Vue} [vm]
  * @return {String}
  */
 
-function tokensToExp(tokens) {
+function tokensToExp(tokens, vm) {
   if (tokens.length > 1) {
     return tokens.map(function (token) {
-      return formatToken(token);
+      return formatToken(token, vm);
     }).join('+');
   } else {
-    return formatToken(tokens[0], true);
+    return formatToken(tokens[0], vm, true);
   }
 }
 
@@ -811,12 +819,13 @@ function tokensToExp(tokens) {
  * Format a single token.
  *
  * @param {Object} token
- * @param {Boolean} single
+ * @param {Vue} [vm]
+ * @param {Boolean} [single]
  * @return {String}
  */
 
-function formatToken(token, single) {
-  return token.tag ? inlineFilters(token.value, single) : '"' + token.value + '"';
+function formatToken(token, vm, single) {
+  return token.tag ? token.oneTime && vm ? '"' + vm.$eval(token.value) + '"' : inlineFilters(token.value, single) : '"' + token.value + '"';
 }
 
 /**
@@ -3349,9 +3358,9 @@ var TRANSITION = 1100;
 var EL = 1500;
 var COMPONENT = 1500;
 var PARTIAL = 1750;
-var SLOT = 1750;
 var FOR = 2000;
 var IF = 2000;
+var SLOT = 2100;
 
 var el = {
 
@@ -3490,11 +3499,10 @@ var xlinkNS = 'http://www.w3.org/1999/xlink';
 var xlinkRE = /^xlink:/;
 
 // check for attributes that prohibit interpolations
-var disallowedInterpAttrRE = /^v-|^:|^@|^(is|transition|transition-mode|debounce|track-by|stagger|enter-stagger|leave-stagger)$/;
-
+var disallowedInterpAttrRE = /^v-|^:|^@|^(?:is|transition|transition-mode|debounce|track-by|stagger|enter-stagger|leave-stagger)$/;
 // these attributes should also set their corresponding properties
 // because they only affect the initial state of the element
-var attrWithPropsRE = /^(value|checked|selected|muted)$/;
+var attrWithPropsRE = /^(?:value|checked|selected|muted)$/;
 
 // these attributes should set a hidden property for
 // binding v-model to object values
@@ -3516,17 +3524,24 @@ var bind = {
       this.deep = true;
     }
     // handle interpolation bindings
-    if (this.descriptor.interp) {
+    var descriptor = this.descriptor;
+    var tokens = descriptor.interp;
+    if (tokens) {
+      // handle interpolations with one-time tokens
+      if (descriptor.hasOneTime) {
+        this.expression = tokensToExp(tokens, this._scope || this.vm);
+      }
+
       // only allow binding on native attributes
       if (disallowedInterpAttrRE.test(attr) || attr === 'name' && (tag === 'PARTIAL' || tag === 'SLOT')) {
-        process.env.NODE_ENV !== 'production' && warn(attr + '="' + this.descriptor.raw + '": ' + 'attribute interpolation is not allowed in Vue.js ' + 'directives and special attributes.');
+        process.env.NODE_ENV !== 'production' && warn(attr + '="' + descriptor.raw + '": ' + 'attribute interpolation is not allowed in Vue.js ' + 'directives and special attributes.');
         this.el.removeAttribute(attr);
         this.invalid = true;
       }
 
       /* istanbul ignore if */
       if (process.env.NODE_ENV !== 'production') {
-        var raw = attr + '="' + this.descriptor.raw + '": ';
+        var raw = attr + '="' + descriptor.raw + '": ';
         // warn src
         if (attr === 'src') {
           warn(raw + 'interpolation in "src" attribute will cause ' + 'a 404 request. Use v-bind:src instead.');
@@ -3942,7 +3957,7 @@ var text$2 = {
     // prevent messing with the input when user is typing,
     // and force update on blur.
     this.focused = false;
-    if (!isRange) {
+    if (!isRange && !lazy) {
       this.on('focus', function () {
         self.focused = true;
       });
@@ -4200,10 +4215,8 @@ function stringToFragment(templateString, raw) {
     var suffix = wrap[2];
     var node = document.createElement('div');
 
-    if (!raw) {
-      templateString = templateString.trim();
-    }
-    node.innerHTML = prefix + templateString + suffix;
+    var templateStringToUse = raw ? templateString : templateString.trim();
+    node.innerHTML = prefix + templateStringToUse + suffix;
     while (depth--) {
       node = node.lastChild;
     }
@@ -4434,23 +4447,12 @@ function Fragment(linker, vm, frag, host, scope, parentFrag) {
 
 Fragment.prototype.callHook = function (hook) {
   var i, l;
-  for (i = 0, l = this.children.length; i < l; i++) {
-    hook(this.children[i]);
-  }
   for (i = 0, l = this.childFrags.length; i < l; i++) {
     this.childFrags[i].callHook(hook);
   }
-};
-
-/**
- * Destroy the fragment.
- */
-
-Fragment.prototype.destroy = function () {
-  if (this.parentFrag) {
-    this.parentFrag.childFrags.$remove(this);
+  for (i = 0, l = this.children.length; i < l; i++) {
+    hook(this.children[i]);
   }
-  this.unlink();
 };
 
 /**
@@ -4477,7 +4479,7 @@ function singleRemove() {
   this.inserted = false;
   var shouldCallRemove = inDoc(this.node);
   var self = this;
-  self.callHook(destroyChild);
+  this.beforeRemove();
   removeWithTransition(this.node, this.vm, function () {
     if (shouldCallRemove) {
       self.callHook(detach);
@@ -4513,7 +4515,7 @@ function multiRemove() {
   this.inserted = false;
   var self = this;
   var shouldCallRemove = inDoc(this.node);
-  self.callHook(destroyChild);
+  this.beforeRemove();
   removeNodeRange(this.node, this.end, this.vm, this.frag, function () {
     if (shouldCallRemove) {
       self.callHook(detach);
@@ -4521,6 +4523,46 @@ function multiRemove() {
     self.destroy();
   });
 }
+
+/**
+ * Prepare the fragment for removal.
+ */
+
+Fragment.prototype.beforeRemove = function () {
+  var i, l;
+  for (i = 0, l = this.childFrags.length; i < l; i++) {
+    // call the same method recursively on child
+    // fragments, depth-first
+    this.childFrags[i].beforeRemove(false);
+  }
+  for (i = 0, l = this.children.length; i < l; i++) {
+    // Call destroy for all contained instances,
+    // with remove:false and defer:true.
+    // Defer is necessary because we need to
+    // keep the children to call detach hooks
+    // on them.
+    this.children[i].$destroy(false, true);
+  }
+  var dirs = this.unlink.dirs;
+  for (i = 0, l = dirs.length; i < l; i++) {
+    // disable the watchers on all the directives
+    // so that the rendered content stays the same
+    // during removal.
+    dirs[i]._watcher && dirs[i]._watcher.teardown();
+  }
+};
+
+/**
+ * Destroy the fragment.
+ */
+
+Fragment.prototype.destroy = function () {
+  if (this.parentFrag) {
+    this.parentFrag.childFrags.$remove(this);
+  }
+  this.node.__vfrag__ = null;
+  this.unlink();
+};
 
 /**
  * Call attach hook for a Vue instance.
@@ -4532,20 +4574,6 @@ function attach(child) {
   if (!child._isAttached) {
     child._callHook('attached');
   }
-}
-
-/**
- * Call destroy for all contained instances,
- * with remove:false and defer:true.
- * Defer is necessary because we need to
- * keep the children to call detach hooks
- * on them.
- *
- * @param {Vue} child
- */
-
-function destroyChild(child) {
-  child.$destroy(false, true);
 }
 
 /**
@@ -4993,6 +5021,14 @@ var vFor = {
    */
 
   move: function move(frag, prevEl) {
+    // fix a common issue with Sortable:
+    // if prevEl doesn't have nextSibling, this means it's
+    // been dragged after the end anchor. Just re-position
+    // the end anchor to the end of the container.
+    /* istanbul ignore if */
+    if (!prevEl.nextSibling) {
+      this.end.parentNode.appendChild(this.end);
+    }
     frag.before(prevEl.nextSibling, false);
   },
 
@@ -5328,8 +5364,8 @@ function flush() {
   return f;
 }
 
-var TYPE_TRANSITION = 1;
-var TYPE_ANIMATION = 2;
+var TYPE_TRANSITION = 'transition';
+var TYPE_ANIMATION = 'animation';
 var transDurationProp = transitionProp + 'Duration';
 var animDurationProp = animationProp + 'Duration';
 
@@ -5345,8 +5381,8 @@ var animDurationProp = animationProp + 'Duration';
 function Transition(el, id, hooks, vm) {
   this.id = id;
   this.el = el;
-  this.enterClass = id + '-enter';
-  this.leaveClass = id + '-leave';
+  this.enterClass = hooks && hooks.enterClass || id + '-enter';
+  this.leaveClass = hooks && hooks.leaveClass || id + '-leave';
   this.hooks = hooks;
   this.vm = vm;
   // async state
@@ -5354,6 +5390,14 @@ function Transition(el, id, hooks, vm) {
   this.justEntered = false;
   this.entered = this.left = false;
   this.typeCache = {};
+  // check css transition type
+  this.type = hooks && hooks.type;
+  /* istanbul ignore if */
+  if (process.env.NODE_ENV !== 'production') {
+    if (this.type && this.type !== TYPE_TRANSITION && this.type !== TYPE_ANIMATION) {
+      warn('invalid CSS transition type for transition="' + this.id + '": ' + this.type);
+    }
+  }
   // bind
   var self = this;['enterNextTick', 'enterDone', 'leaveNextTick', 'leaveDone'].forEach(function (m) {
     self[m] = bind$1(self[m], self);
@@ -5613,7 +5657,7 @@ p$1.getCssTransitionType = function (className) {
   isHidden(this.el)) {
     return;
   }
-  var type = this.typeCache[className];
+  var type = this.type || this.typeCache[className];
   if (type) return type;
   var inlineStyles = this.el.style;
   var computedStyles = window.getComputedStyle(this.el);
@@ -6214,7 +6258,7 @@ function compileProps(el, propOptions) {
       value = parsed.expression;
       prop.filters = parsed.filters;
       // check binding type
-      if (isLiteral(value)) {
+      if (isLiteral(value) && !parsed.filters) {
         // for expressions containing literal numbers and
         // booleans, there's no need to setup a prop binding,
         // so we can optimize them as a one-time set.
@@ -6433,12 +6477,15 @@ function directiveComparator(a, b) {
  */
 
 function makeUnlinkFn(vm, dirs, context, contextDirs) {
-  return function unlink(destroying) {
+  function unlink(destroying) {
     teardownDirs(vm, dirs, destroying);
     if (context && contextDirs) {
       teardownDirs(context, contextDirs);
     }
-  };
+  }
+  // expose linked directives
+  unlink.dirs = dirs;
+  return unlink;
 }
 
 /**
@@ -6534,6 +6581,7 @@ function compileRoot(el, options, contextOptions) {
     }
   }
 
+  options._containerAttrs = options._replacerAttrs = null;
   return function rootLinkFn(vm, el, scope) {
     // link context scope dirs
     var context = vm._context;
@@ -6861,11 +6909,10 @@ function checkTerminalDirectives(el, options) {
   var value, dirName;
   for (var i = 0, l = terminalDirectives.length; i < l; i++) {
     dirName = terminalDirectives[i];
-    /* eslint-disable no-cond-assign */
-    if (value = el.getAttribute('v-' + dirName)) {
+    value = el.getAttribute('v-' + dirName);
+    if (value != null) {
       return makeTerminalNodeLinkFn(el, dirName, value, options);
     }
-    /* eslint-enable no-cond-assign */
   }
 }
 
@@ -6937,7 +6984,7 @@ function compileDirectives(attrs, options) {
     if (tokens) {
       value = tokensToExp(tokens);
       arg = name;
-      pushDir('bind', publicDirectives.bind, true);
+      pushDir('bind', publicDirectives.bind, tokens);
       // warn against mixing mustaches with v-bind
       if (process.env.NODE_ENV !== 'production') {
         if (name === 'class' && Array.prototype.some.call(attrs, function (attr) {
@@ -7003,11 +7050,12 @@ function compileDirectives(attrs, options) {
    *
    * @param {String} dirName
    * @param {Object|Function} def
-   * @param {Boolean} [interp]
+   * @param {Array} [interpTokens]
    */
 
-  function pushDir(dirName, def, interp) {
-    var parsed = parseDirective(value);
+  function pushDir(dirName, def, interpTokens) {
+    var hasOneTimeToken = interpTokens && hasOneTime(interpTokens);
+    var parsed = !hasOneTimeToken && parseDirective(value);
     dirs.push({
       name: dirName,
       attr: rawName,
@@ -7015,9 +7063,13 @@ function compileDirectives(attrs, options) {
       def: def,
       arg: arg,
       modifiers: modifiers,
-      expression: parsed.expression,
-      filters: parsed.filters,
-      interp: interp
+      // conversion from interpolation strings with one-time token
+      // to expression is differed until directive bind time so that we
+      // have access to the actual vm context for one-time bindings.
+      expression: parsed && parsed.expression,
+      filters: parsed && parsed.filters,
+      interp: interpTokens,
+      hasOneTime: hasOneTimeToken
     });
   }
 
@@ -7060,6 +7112,20 @@ function makeNodeLinkFn(directives) {
       vm._bindDir(directives[i], el, host, scope, frag);
     }
   };
+}
+
+/**
+ * Check if an interpolation string contains one-time tokens.
+ *
+ * @param {Array} tokens
+ * @return {Boolean}
+ */
+
+function hasOneTime(tokens) {
+  var i = tokens.length;
+  while (i--) {
+    if (tokens[i].oneTime) return true;
+  }
 }
 
 var specialCharRE = /[^\w\-:\.]/;
@@ -7191,7 +7257,7 @@ function mergeAttrs(from, to) {
     value = attrs[i].value;
     if (!to.hasAttribute(name) && !specialCharRE.test(name)) {
       to.setAttribute(name, value);
-    } else if (name === 'class') {
+    } else if (name === 'class' && !parseText(value)) {
       value.split(/\s+/).forEach(function (cls) {
         addClass(to, cls);
       });
@@ -7203,6 +7269,7 @@ var compiler = Object.freeze({
 	compile: compile,
 	compileAndLinkProps: compileAndLinkProps,
 	compileRoot: compileRoot,
+	terminalDirectives: terminalDirectives,
 	transclude: transclude
 });
 
@@ -7481,6 +7548,7 @@ function eventsMixin (Vue) {
       if (eventRE.test(name)) {
         name = name.replace(eventRE, '');
         handler = (vm._scope || vm._context).$eval(attrs[i].value, true);
+        handler._fromParent = true;
         vm.$on(name.replace(eventRE), handler);
       }
     }
@@ -8416,8 +8484,9 @@ function dataAPI (Vue) {
         var self = this;
         return function statementHandler() {
           self.$arguments = toArray(arguments);
-          res.get.call(self, self);
+          var result = res.get.call(self, self);
           self.$arguments = null;
+          return result;
         };
       } else {
         try {
@@ -8837,19 +8906,32 @@ function eventsAPI (Vue) {
   /**
    * Trigger an event on self.
    *
-   * @param {String} event
+   * @param {String|Object} event
    * @return {Boolean} shouldPropagate
    */
 
   Vue.prototype.$emit = function (event) {
+    var isSource = typeof event === 'string';
+    event = isSource ? event : event.name;
     var cbs = this._events[event];
-    var shouldPropagate = !cbs;
+    var shouldPropagate = isSource || !cbs;
     if (cbs) {
       cbs = cbs.length > 1 ? toArray(cbs) : cbs;
+      // this is a somewhat hacky solution to the question raised
+      // in #2102: for an inline component listener like <comp @test="doThis">,
+      // the propagation handling is somewhat broken. Therefore we
+      // need to treat these inline callbacks differently.
+      var hasParentCbs = isSource && cbs.some(function (cb) {
+        return cb._fromParent;
+      });
+      if (hasParentCbs) {
+        shouldPropagate = false;
+      }
       var args = toArray(arguments, 1);
       for (var i = 0, l = cbs.length; i < l; i++) {
-        var res = cbs[i].apply(this, args);
-        if (res === true) {
+        var cb = cbs[i];
+        var res = cb.apply(this, args);
+        if (res === true && (!hasParentCbs || cb._fromParent)) {
           shouldPropagate = true;
         }
       }
@@ -8860,20 +8942,28 @@ function eventsAPI (Vue) {
   /**
    * Recursively broadcast an event to all children instances.
    *
-   * @param {String} event
+   * @param {String|Object} event
    * @param {...*} additional arguments
    */
 
   Vue.prototype.$broadcast = function (event) {
+    var isSource = typeof event === 'string';
+    event = isSource ? event : event.name;
     // if no child has registered for this event,
     // then there's no need to broadcast.
     if (!this._eventsCount[event]) return;
     var children = this.$children;
+    var args = toArray(arguments);
+    if (isSource) {
+      // use object event to indicate non-source emit
+      // on children
+      args[0] = { name: event, source: this };
+    }
     for (var i = 0, l = children.length; i < l; i++) {
       var child = children[i];
-      var shouldPropagate = child.$emit.apply(child, arguments);
+      var shouldPropagate = child.$emit.apply(child, args);
       if (shouldPropagate) {
-        child.$broadcast.apply(child, arguments);
+        child.$broadcast.apply(child, args);
       }
     }
     return this;
@@ -8886,11 +8976,16 @@ function eventsAPI (Vue) {
    * @param {...*} additional arguments
    */
 
-  Vue.prototype.$dispatch = function () {
-    this.$emit.apply(this, arguments);
+  Vue.prototype.$dispatch = function (event) {
+    var shouldPropagate = this.$emit.apply(this, arguments);
+    if (!shouldPropagate) return;
     var parent = this.$parent;
+    var args = toArray(arguments);
+    // use object event to indicate non-source emit
+    // on parents
+    args[0] = { name: event, source: this };
     while (parent) {
-      var shouldPropagate = parent.$emit.apply(parent, arguments);
+      shouldPropagate = parent.$emit.apply(parent, args);
       parent = shouldPropagate ? parent.$parent : null;
     }
     return this;
@@ -9027,6 +9122,7 @@ var convertArray = vFor._postProcess;
 
 function limitBy(arr, n, offset) {
   offset = offset ? parseInt(offset, 10) : 0;
+  n = toNumber(n);
   return typeof n === 'number' ? arr.slice(offset, offset + n) : arr;
 }
 
@@ -9396,7 +9492,7 @@ var elementDirectives = {
   partial: partial
 };
 
-Vue.version = '1.0.13';
+Vue.version = '1.0.15';
 
 /**
  * Vue and every constructor that extends Vue has an
@@ -9746,17 +9842,72 @@ function updateView (view, Component) {
   // disable transitions
   view.vm._isCompiled = false
   // save state
-  var state = view.childVM.$data
+  var state = extractState(view.childVM)
   // remount, make sure to disable keep-alive
   var keepAlive = view.keepAlive
   view.keepAlive = false
   view.mountComponent()
   view.keepAlive = keepAlive
   // restore state
-  view.childVM.$data = state
+  restoreState(view.childVM, state, true)
   // re-eanble transitions
   view.vm._isCompiled = true
   view.hotUpdating = false
+}
+
+/**
+ * Extract state from a Vue instance.
+ *
+ * @param {Vue} vm
+ * @return {Object}
+ */
+
+function extractState (vm) {
+  return {
+    cid: vm.constructor.cid,
+    data: vm.$data,
+    children: vm.$children.map(extractState)
+  }
+}
+
+/**
+ * Restore state to a reloaded Vue instance.
+ *
+ * @param {Vue} vm
+ * @param {Object} state
+ */
+
+function restoreState (vm, state, isRoot) {
+  var oldAsyncConfig
+  if (isRoot) {
+    // set Vue into sync mode during state rehydration
+    oldAsyncConfig = Vue.config.async
+    Vue.config.async = false
+  }
+  // actual restore
+  if (isRoot || !vm._props) {
+    vm.$data = state.data
+  } else {
+    Object.keys(state.data).forEach(function (key) {
+      if (!vm._props[key]) {
+        // for non-root, only restore non-props fields
+        vm.$data[key] = state.data[key]
+      }
+    })
+  }
+  // verify child consistency
+  var hasSameChildren = vm.$children.every(function (c, i) {
+    return state.children[i] && state.children[i].cid === c.constructor.cid
+  })
+  if (hasSameChildren) {
+    // rehydrate children
+    vm.$children.forEach(function (c, i) {
+      restoreState(c, state.children[i])
+    })
+  }
+  if (isRoot) {
+    Vue.config.async = oldAsyncConfig
+  }
 }
 
 function format (id) {
@@ -9785,16 +9936,72 @@ module.exports = {
 
 },{"../util":27}],5:[function(require,module,exports){
 /**
- * Default client.
+ * Base client.
  */
 
+var _ = require('../../util');
+var Promise = require('../../promise');
 var xhrClient = require('./xhr');
 
 module.exports = function (request) {
-    return (request.client || xhrClient)(request);
+
+    var response = (request.client || xhrClient)(request);
+
+    return Promise.resolve(response).then(function (response) {
+
+        if (response.headers) {
+
+            var headers = parseHeaders(response.headers);
+
+            response.headers = function (name) {
+
+                if (name) {
+                    return headers[_.toLower(name)];
+                }
+
+                return headers;
+            };
+
+        }
+
+        response.ok = response.status >= 200 && response.status < 300;
+
+        return response;
+    });
+
 };
 
-},{"./xhr":8}],6:[function(require,module,exports){
+function parseHeaders(str) {
+
+    var headers = {}, value, name, i;
+
+    if (_.isString(str)) {
+        _.each(str.split('\n'), function (row) {
+
+            i = row.indexOf(':');
+            name = _.trim(_.toLower(row.slice(0, i)));
+            value = _.trim(row.slice(i + 1));
+
+            if (headers[name]) {
+
+                if (_.isArray(headers[name])) {
+                    headers[name].push(value);
+                } else {
+                    headers[name] = [headers[name], value];
+                }
+
+            } else {
+
+                headers[name] = value;
+            }
+
+        });
+    }
+
+    return headers;
+}
+
+},{"../../promise":20,"../../util":27,"./xhr":8}],6:[function(require,module,exports){
 /**
  * JSONP client.
  */
@@ -9902,79 +10109,38 @@ module.exports = function (request) {
 
         xhr.open(request.method, _.url(request), true);
 
+        handler = function (event) {
+
+            response.data = xhr.responseText;
+            response.status = xhr.status;
+            response.statusText = xhr.statusText;
+            response.headers = xhr.getAllResponseHeaders();
+
+            resolve(response);
+        };
+
+        xhr.timeout = 0;
+        xhr.onload = handler;
+        xhr.onabort = handler;
+        xhr.onerror = handler;
+        xhr.ontimeout = function () {};
+        xhr.onprogress = function () {};
+
         if (_.isPlainObject(request.xhr)) {
             _.extend(xhr, request.xhr);
+        }
+
+        if (_.isPlainObject(request.upload)) {
+            _.extend(xhr.upload, request.upload);
         }
 
         _.each(request.headers || {}, function (value, header) {
             xhr.setRequestHeader(header, value);
         });
 
-        handler = function (event) {
-
-            response.data = xhr.responseText;
-            response.status = xhr.status;
-            response.statusText = xhr.statusText;
-            response.headers = getHeaders(xhr);
-
-            resolve(response);
-        };
-
-        xhr.onload = handler;
-        xhr.onabort = handler;
-        xhr.onerror = handler;
-
         xhr.send(request.data);
     });
 };
-
-function getHeaders(xhr) {
-
-    var headers;
-
-    if (!headers) {
-        headers = parseHeaders(xhr.getAllResponseHeaders());
-    }
-
-    return function (name) {
-
-        if (name) {
-            return headers[_.toLower(name)];
-        }
-
-        return headers;
-    };
-}
-
-function parseHeaders(str) {
-
-    var headers = {}, value, name, i;
-
-    if (_.isString(str)) {
-        _.each(str.split('\n'), function (row) {
-
-            i = row.indexOf(':');
-            name = _.trim(_.toLower(row.slice(0, i)));
-            value = _.trim(row.slice(i + 1));
-
-            if (headers[name]) {
-
-                if (_.isArray(headers[name])) {
-                    headers[name].push(value);
-                } else {
-                    headers[name] = [headers[name], value];
-                }
-
-            } else {
-
-                headers[name] = value;
-            }
-
-        });
-    }
-
-    return headers;
-}
 
 },{"../../promise":20,"../../util":27}],9:[function(require,module,exports){
 /**
@@ -10049,14 +10215,14 @@ module.exports = {
  */
 
 var _ = require('../util');
+var Client = require('./client');
 var Promise = require('../promise');
 var interceptor = require('./interceptor');
-var defaultClient = require('./client/default');
 var jsonType = {'Content-Type': 'application/json'};
 
 function Http(url, options) {
 
-    var client = defaultClient, request, promise;
+    var client = Client, request, promise;
 
     Http.interceptors.forEach(function (handler) {
         client = interceptor(handler, this.$vm)(client);
@@ -10066,7 +10232,6 @@ function Http(url, options) {
     request = _.merge({}, Http.options, this.$options, options);
     promise = client(request).bind(this.$vm).then(function (response) {
 
-        response.ok = response.status >= 200 && response.status < 300;
         return response.ok ? response : Promise.reject(response);
 
     }, function (response) {
@@ -10095,6 +10260,7 @@ Http.options = {
     params: {},
     headers: {},
     xhr: null,
+    upload: null,
     jsonp: 'callback',
     beforeSend: null,
     crossOrigin: null,
@@ -10143,7 +10309,7 @@ Http.headers = {
 
 module.exports = _.http = Http;
 
-},{"../promise":20,"../util":27,"./before":4,"./client/default":5,"./cors":9,"./header":10,"./interceptor":12,"./jsonp":13,"./method":14,"./mime":15,"./timeout":16}],12:[function(require,module,exports){
+},{"../promise":20,"../util":27,"./before":4,"./client":5,"./cors":9,"./header":10,"./interceptor":12,"./jsonp":13,"./method":14,"./mime":15,"./timeout":16}],12:[function(require,module,exports){
 /**
  * Interceptor factory.
  */
@@ -11279,12 +11445,50 @@ function merge(target, source, deep) {
 },{}],28:[function(require,module,exports){
 arguments[4][1][0].apply(exports,arguments)
 },{"_process":2,"dup":1}],29:[function(require,module,exports){
-;(typeof module.exports === "function"? module.exports.options: module.exports).template = "\n    <div class=\"col-md-5 \">\n        <div class=\"panel panel-primary\">\n            <div class=\"panel-heading\">\n                <div class=\"dropdown\">\n                    <button class=\"btn btn-primary dropdown-toggle\" type=\"button\" data-toggle=\"dropdown\" aria-haspopup=\"true\" aria-expanded=\"true\">\n                        {{activeBuilding.name }}\n\n                        <span class=\"caret\"></span>\n                    </button>\n                    <ul class=\"dropdown-menu\" aria-labelledby=\"dropdownMenu1\">\n                        <li v-for=\"building in buildings\"><a v-on:click=\"setActive({{building}})\" href=\"#\">{{building.name }}</a></li>\n                        <li role=\"separator\" class=\"divider\"></li>\n                        <li><a href=\"#\">Add building</a></li>\n                    </ul>\n                </div>\n            </div>\n\n            <div v-if=\"buildings\" class=\"panel-body\">\n\n                <ul v-for=\"unit in units\" class=\"list-group\">\n\n                    <li class=\"list-group-item\"><i class=\" fa fa-btn fa-building\"></i><a href=\"#\">unit name</a></li>\n\n                </ul>\n\n\n                <div class=\"col-md-offset-4\">\n                    <a href=\"/building/{{ buildings[1].id }}unit/create\">\n                        <button class=\"btn btn-success\">Add a Unit</button>\n                    </a>\n\n                </div>\n\n            </div>\n        </div>\n    </div>\n"
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.default = {
+
+    props: ['folio'],
+
+    data: function data() {
+        return {
+            buildings: [],
+            activeBuilding: [],
+            url: ""
+        };
+    },
+
+    created: function created() {
+
+        console.log("attempting to pull the buildings");
+        this.getBuildings();
+        console.log(this.buildings);
+    },
+    methods: {
+        getBuildings: function getBuildings() {
+            this.$http.get('api/portfolio/' + this.folio + '/building', function (b) {
+                this.buildings = b;
+                this.activeBuilding = b[0];
+            }).bind(this);
+        },
+
+        setActive: function setActive(id) {
+            this.activeBuilding = id;
+        }
+    }
+
+};
+if (module.exports.__esModule) module.exports = module.exports.default
+;(typeof module.exports === "function"? module.exports.options: module.exports).template = "\n<div class=\"col-md-5 \">\n    <div class=\"panel panel-primary\">\n        <div class=\"panel-heading\">\n            <div class=\"dropdown\">\n                <button class=\"btn btn-primary dropdown-toggle\" type=\"button\" data-toggle=\"dropdown\" aria-haspopup=\"true\" aria-expanded=\"true\">\n                    {{activeBuilding.name }}\n\n                    <span class=\"caret\"></span>\n                </button>\n                <ul class=\"dropdown-menu\" aria-labelledby=\"dropdownMenu1\">\n                    <li v-for=\"building in buildings\">\n                        <a v-on:click=\"setActive(building)\" href=\"#\">\n                            {{building.name }}\n                        </a>\n                    </li>\n                    <li role=\"separator\" class=\"divider\"></li>\n                    <li><a href=\"#\">Add building</a></li>\n\n                </ul>\n            </div>\n        </div>\n\n        <div v-if=\"buildings\" class=\"panel-body\">\n            <ul class=\"list-group\">\n\n                <li v-for=\"unit in activeBuilding.units\" class=\"list-group-item\">\n                    <i class=\" fa fa-btn fa-building\"></i>\n                    <a href=\"#\">{{unit.name}}</a>\n                </li>\n\n            </ul>\n\n              <div class=\"col-md-offset-4\">\n                <a href=\"./building/{{ activeBuilding.id }}/unit/create\">\n                    <button class=\"btn btn-success\">Add a Unit</button>\n                </a>\n\n            </div>\n\n        </div>\n    </div>\n</div>\n"
 if (module.hot) {(function () {  module.hot.accept()
   var hotAPI = require("vue-hot-reload-api")
   hotAPI.install(require("vue"), true)
   if (!hotAPI.compatible) return
-  var id = "c:\\xampp\\htdocs\\poptemp\\resources\\assets\\js\\components\\unitsPanel.vue"
+  var id = "c:\\xampp\\htdocs\\property-runner\\resources\\assets\\js\\components\\unitsPanel.vue"
   if (!module.hot.data) {
     hotAPI.createRecord(id, module.exports)
   } else {

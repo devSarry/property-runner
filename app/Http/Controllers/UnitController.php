@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Building;
 use Illuminate\Http\Request;
 
 use App\Http\Requests;
 use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\Auth;
 
 class UnitController extends Controller
 {
@@ -24,9 +26,10 @@ class UnitController extends Controller
      *
      * @return \Illuminate\Http\Response
      */
-    public function create()
+    public function create($id)
     {
-        //
+        $building = Building::findOrFail($id);
+        return view('units.create')->with('building', $building);
     }
 
     /**
@@ -35,9 +38,14 @@ class UnitController extends Controller
      * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\Response
      */
-    public function store(Request $request)
+    public function store($id, Request $request)
     {
-        //
+        //a user can add a unit to  a building
+        $building = Building::findOrFail($id);
+
+        $unit = $building->units()->create($request->all());
+
+        return redirect(url('/home'));
     }
 
     /**

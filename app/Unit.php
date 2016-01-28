@@ -9,5 +9,10 @@ class Unit extends Model
 {
     use SoftDeletes;
 
-    //
+    protected $fillable = [
+        'name',
+        'address',
+        'sq_ft',
+        'description'
+    ];
 }
